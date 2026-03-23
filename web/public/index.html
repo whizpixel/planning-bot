@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gaming Planner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        ink: '#111111',
+                        soft: '#f5f5f3',
+                        muted: '#9a9a96',
+                        line: '#e8e8e4',
+                        accent: '#2563eb',
+                        danger: '#dc2626',
+                    },
+                    fontFamily: {
+                        serif: ['"DM Serif Display"', 'serif'],
+                        mono: ['"DM Mono"', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'DM Mono', monospace;
+        }
+
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fade-up {
+            animation: fadeUp 0.25s ease forwards;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
+
+        .cursor::after {
+            content: '|';
+            animation: blink 1.1s infinite;
+            color: #2563eb;
+            margin-left: 2px;
+        }
+
+        select {
+            color-scheme: light;
+            appearance: none;
+            -webkit-appearance: none;
+        }
+
+        input {
+            color-scheme: light;
+        }
+
+        .toast-show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast-hide {
+            transform: translateY(80px);
+            opacity: 0;
+        }
+
+        .day-row.has-game .day-name {
+            color: #2563eb;
+        }
+
+        .day-row.today-row {
+            background: #eff6ff;
+        }
+
+        .day-row.today-row .day-date {
+            color: #2563eb;
+        }
+
+        /* Masquer le champ heure si pas de jeu sélectionné */
+        .day-row:not(.has-game) .time-input {
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        select:focus,
+        input[type="time"]:focus {
+            outline: none;
+        }
+
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            cursor: pointer;
+            opacity: 0.4;
+        }
+    </style>
+</head>
+
+<body class="bg-soft min-h-screen text-ink">
+
+    <div class="max-w-2xl mx-auto px-10 py-16">
+
+        <!-- Header -->
+        <header class="mb-14">
+            <div class="flex items-start justify-between">
+                <div>
+                    <h1 class="font-serif text-5xl text-ink leading-none mb-3 cursor">Planning</h1>
+                    <p class="text-xs text-muted tracking-widest uppercase">Sessions de jeu · semaine courante</p>
+                </div>
+                <button id="discordBtn" onclick="sendToDiscord()"
+                    class="font-mono text-xs tracking-wider uppercase mt-2 px-4 py-2 border border-line text-muted rounded-sm hover:border-accent hover:text-accent transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed">
+                    → Discord
+                </button>
+            </div>
+            <div class="h-px bg-line mt-8"></div>
+        </header>
+
+        <!-- Vue semaine -->
+        <section class="mb-14">
+            <div class="flex items-center justify-between mb-6">
+                <span class="text-xs tracking-widest text-muted uppercase">Semaine</span>
+                <button onclick="saveWeek()"
+                    class="font-mono text-xs tracking-wider uppercase px-5 py-2 bg-ink text-white rounded-sm hover:bg-accent transition-all duration-200">
+                    Enregistrer
+                </button>
+            </div>
+
+            <div id="weekGrid" class="flex flex-col gap-1"></div>
+        </section>
+
+        <div class="h-px bg-line mb-14"></div>
+
+        <!-- Gestion des jeux -->
+        <section>
+            <div class="flex items-center justify-between mb-6">
+                <span class="text-xs tracking-widest text-muted uppercase">Jeux</span>
+                <button onclick="toggleGameForm()"
+                    class="font-mono text-xs tracking-wider uppercase text-muted hover:text-accent transition-all">
+                    + Ajouter
+                </button>
+            </div>
+
+            <div id="gameForm" class="hidden fade-up mb-6">
+                <div class="flex gap-3 items-end">
+                    <div class="flex flex-col gap-1.5 flex-1">
+                        <label class="text-xs tracking-widest text-muted uppercase">Nom du jeu</label>
+                        <input id="inputGame" type="text" placeholder="Valorant, LoL, Minecraft..."
+                            class="bg-white border border-line rounded-sm text-ink text-sm px-3 py-2.5 outline-none focus:border-accent transition-all placeholder:text-muted/40 font-mono"
+                            onkeydown="if(event.key==='Enter') addGame()">
+                    </div>
+                    <button onclick="addGame()"
+                        class="font-mono text-xs tracking-wider uppercase px-4 py-2.5 bg-ink text-white rounded-sm hover:bg-accent transition-all">
+                        Ajouter
+                    </button>
+                    <button onclick="toggleGameForm()"
+                        class="font-mono text-xs tracking-wider uppercase px-4 py-2.5 border border-line text-muted rounded-sm hover:border-ink transition-all">
+                        ✕
+                    </button>
+                </div>
+            </div>
+
+            <div id="gamesList" class="flex flex-wrap gap-2"></div>
+        </section>
+
+    </div>
+
+    <!-- Toast -->
+    <div id="toast"
+        class="fixed bottom-8 right-8 text-xs tracking-wider px-5 py-3 rounded-sm z-50 transition-all duration-300 toast-hide">
+    </div>
+
+    <script>
+        const DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+        const DEFAULT_HEURE = '20:00';
+
+        let planning = { sessions: [], games: [] };
+        let games = [];
+        let weekDates = [];
+
+        function getWeekDates() {
+            const today = new Date();
+            const day = today.getDay();
+            const monday = new Date(today);
+            monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+            monday.setHours(0, 0, 0, 0);
+            return Array.from({ length: 7 }, (_, i) => {
+                const d = new Date(monday);
+                d.setDate(monday.getDate() + i);
+                return d;
+            });
+        }
+
+        function toISO(date) {
+            // Utiliser l'heure locale au lieu d'UTC pour éviter le décalage
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+        async function load() {
+            try {
+                const res = await fetch('/api/planning');
+                const data = await res.json();
+                planning = data;
+                games = data.games || [];
+            } catch {
+                showToast('Erreur chargement', true);
+            }
+            weekDates = getWeekDates();
+            renderWeek();
+            renderGames();
+        }
+
+        function renderWeek() {
+            const grid = document.getElementById('weekGrid');
+            const today = toISO(new Date());
+
+            grid.innerHTML = weekDates.map((date, i) => {
+                const iso = toISO(date);
+                const session = planning.sessions.find(s => s.date === iso);
+                const isToday = iso === today;
+                const dayNum = date.getDate().toString().padStart(2, '0');
+                const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                const heure = session?.heure || DEFAULT_HEURE;
+
+                const options = games.map(g =>
+                    `<option value="${g}" ${session?.jeu === g ? 'selected' : ''}>${g}</option>`
+                ).join('');
+
+                return `
+        <div class="day-row ${isToday ? 'today-row' : ''} ${session ? 'has-game' : ''} border border-line rounded-sm px-5 py-3 flex items-center gap-4 transition-all hover:border-accent/30"
+             id="row-${iso}">
+
+          <!-- Jour -->
+          <div class="w-20 shrink-0">
+            <span class="day-name font-mono text-xs tracking-widest uppercase text-muted transition-colors">${DAYS[i]}</span>
+          </div>
+
+          <!-- Date -->
+          <span class="day-date font-serif text-lg text-ink w-14 shrink-0">${dayNum}/${month}</span>
+
+          <!-- Select jeu -->
+          <div class="relative flex-1">
+            <select id="sel-${iso}" onchange="onSelectChange('${iso}')"
+              class="w-full bg-transparent border border-line rounded-sm text-sm font-mono px-3 py-2 text-ink cursor-pointer pr-8 transition-all hover:border-accent/50 focus:border-accent">
+              <option value="">— Aucun jeu</option>
+              ${options}
+            </select>
+            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-muted text-xs pointer-events-none">▾</span>
+          </div>
+
+          <!-- Heure -->
+          <div class="time-input shrink-0 transition-opacity">
+            <input type="time" id="time-${iso}" value="${heure}"
+              class="bg-white border border-line rounded-sm text-xs font-mono px-2 py-2 text-ink focus:border-accent transition-all w-24">
+          </div>
+
+        </div>
+      `;
+            }).join('');
+        }
+
+        function onSelectChange(iso) {
+            const sel = document.getElementById(`sel-${iso}`);
+            const row = document.getElementById(`row-${iso}`);
+
+            if (sel.value) {
+                row.classList.add('has-game');
+            } else {
+                row.classList.remove('has-game');
+            }
+        }
+
+        async function saveWeek() {
+            const weekIsos = weekDates.map(toISO);
+            const newSessions = [];
+
+            weekDates.forEach(date => {
+                const iso = toISO(date);
+                const sel = document.getElementById(`sel-${iso}`);
+                const timeInput = document.getElementById(`time-${iso}`);
+                if (sel && sel.value) {
+                    const existing = planning.sessions.find(s => s.date === iso);
+                    newSessions.push({
+                        id: existing?.id || Date.now() + Math.random(),
+                        date: iso,
+                        heure: timeInput?.value || DEFAULT_HEURE,
+                        jeu: sel.value,
+                        note: existing?.note || ''
+                    });
+                }
+            });
+
+            const otherSessions = planning.sessions.filter(s => !weekIsos.includes(s.date));
+            planning.sessions = [...otherSessions, ...newSessions];
+
+            await fetch('/api/planning', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(planning)
+            });
+
+            renderWeek();
+            showToast('Semaine enregistrée');
+        }
+
+        function renderGames() {
+            const list = document.getElementById('gamesList');
+            if (games.length === 0) {
+                list.innerHTML = `<span class="text-xs text-muted tracking-widest uppercase">Aucun jeu — commence par en ajouter un</span>`;
+                return;
+            }
+            list.innerHTML = games.map(g => `
+      <div class="fade-up flex items-center gap-2 bg-white border border-line rounded-sm px-3 py-1.5">
+        <span class="text-sm font-mono text-ink">${g}</span>
+        <button onclick="removeGame('${g}')"
+          class="text-muted hover:text-danger transition-all text-xs ml-1">✕</button>
+      </div>
+    `).join('');
+        }
+
+        function toggleGameForm() {
+            const form = document.getElementById('gameForm');
+            form.classList.toggle('hidden');
+            if (!form.classList.contains('hidden')) {
+                setTimeout(() => document.getElementById('inputGame').focus(), 50);
+            }
+        }
+
+        async function addGame() {
+            const input = document.getElementById('inputGame');
+            const name = input.value.trim();
+            if (!name) return;
+            if (games.includes(name)) { showToast('Jeu déjà dans la liste', true); return; }
+            games.push(name);
+            await saveGames();
+            input.value = '';
+            renderGames();
+            renderWeek();
+            showToast(`${name} ajouté`);
+        }
+
+        async function removeGame(name) {
+            games = games.filter(g => g !== name);
+            await saveGames();
+            renderGames();
+            renderWeek();
+            showToast(`${name} supprimé`);
+        }
+
+        async function saveGames() {
+            planning.games = games;
+            await fetch('/api/planning', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(planning)
+            });
+        }
+
+        async function sendToDiscord() {
+            const btn = document.getElementById('discordBtn');
+            btn.disabled = true;
+            btn.textContent = '...';
+            try {
+                const res = await fetch('/api/send-discord', { method: 'POST' });
+                const data = await res.json();
+                showToast(data.success ? 'Envoyé sur Discord !' : 'Erreur envoi', !data.success);
+            } catch {
+                showToast('Erreur envoi', true);
+            }
+            btn.disabled = false;
+            btn.textContent = '→ Discord';
+        }
+
+        function showToast(msg, error = false) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = `fixed bottom-8 right-8 text-xs tracking-wider px-5 py-3 rounded-sm z-50 transition-all duration-300 toast-show ${error ? 'bg-danger text-white' : 'bg-ink text-white'
+                }`;
+            setTimeout(() => {
+                t.classList.remove('toast-show');
+                t.classList.add('toast-hide');
+            }, 3000);
+        }
+
+        load();
+    </script>
+</body>
+
+</html>
