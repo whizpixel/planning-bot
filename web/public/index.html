@@ -213,20 +213,22 @@
         }
 
         function toISO(date) {
-            // Utiliser l'heure locale au lieu d'UTC pour éviter le décalage
             const y = date.getFullYear();
             const m = String(date.getMonth() + 1).padStart(2, '0');
             const d = String(date.getDate()).padStart(2, '0');
             return `${y}-${m}-${d}`;
         }
+
         async function load() {
             try {
                 const res = await fetch('/api/planning');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 planning = data;
                 games = data.games || [];
-            } catch {
-                showToast('Erreur chargement', true);
+            } catch (e) {
+                console.error('Erreur load:', e);
+                showToast('Erreur chargement — serveur démarré ?', true);
             }
             weekDates = getWeekDates();
             renderWeek();
@@ -245,9 +247,11 @@
                 const month = (date.getMonth() + 1).toString().padStart(2, '0');
                 const heure = session?.heure || DEFAULT_HEURE;
 
-                const options = games.map(g =>
-                    `<option value="${g}" ${session?.jeu === g ? 'selected' : ''}>${g}</option>`
-                ).join('');
+                // Échapper les guillemets pour éviter de casser le HTML inline
+                const options = games.map(g => {
+                    const escaped = g.replace(/"/g, '&quot;');
+                    return `<option value="${escaped}" ${session?.jeu === g ? 'selected' : ''}>${g}</option>`;
+                }).join('');
 
                 return `
         <div class="day-row ${isToday ? 'today-row' : ''} ${session ? 'has-game' : ''} border border-line rounded-sm px-5 py-3 flex items-center gap-4 transition-all hover:border-accent/30"
@@ -316,14 +320,21 @@
             const otherSessions = planning.sessions.filter(s => !weekIsos.includes(s.date));
             planning.sessions = [...otherSessions, ...newSessions];
 
-            await fetch('/api/planning', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(planning)
-            });
-
-            renderWeek();
-            showToast('Semaine enregistrée');
+            try {
+                const res = await fetch('/api/planning', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(planning)
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                renderWeek();
+                showToast('Semaine enregistrée');
+            } catch (e) {
+                console.error('Erreur saveWeek:', e);
+                showToast('Erreur sauvegarde', true);
+                // Resync depuis le serveur pour éviter un état incohérent
+                await load();
+            }
         }
 
         function renderGames() {
@@ -332,10 +343,12 @@
                 list.innerHTML = `<span class="text-xs text-muted tracking-widest uppercase">Aucun jeu — commence par en ajouter un</span>`;
                 return;
             }
-            list.innerHTML = games.map(g => `
+            // On utilise l'index pour le bouton supprimer, pas le nom brut
+            // ça évite le bug avec les apostrophes (ex: "Assassin's Creed")
+            list.innerHTML = games.map((g, i) => `
       <div class="fade-up flex items-center gap-2 bg-white border border-line rounded-sm px-3 py-1.5">
         <span class="text-sm font-mono text-ink">${g}</span>
-        <button onclick="removeGame('${g}')"
+        <button onclick="removeGame(${i})"
           class="text-muted hover:text-danger transition-all text-xs ml-1">✕</button>
       </div>
     `).join('');
@@ -353,30 +366,59 @@
             const input = document.getElementById('inputGame');
             const name = input.value.trim();
             if (!name) return;
-            if (games.includes(name)) { showToast('Jeu déjà dans la liste', true); return; }
+
+            // Comparaison insensible à la casse pour éviter les doublons style "LOL" vs "lol"
+            const alreadyExists = games.some(g => g.toLowerCase() === name.toLowerCase());
+            if (alreadyExists) {
+                showToast('Jeu déjà dans la liste', true);
+                return;
+            }
+
             games.push(name);
-            await saveGames();
-            input.value = '';
-            renderGames();
-            renderWeek();
-            showToast(`${name} ajouté`);
+            const ok = await saveGames();
+            if (ok) {
+                input.value = '';
+                renderGames();
+                renderWeek();
+                showToast(`${name} ajouté`);
+            } else {
+                // Rollback si la sauvegarde a échoué
+                games.pop();
+            }
         }
 
-        async function removeGame(name) {
-            games = games.filter(g => g !== name);
-            await saveGames();
-            renderGames();
-            renderWeek();
-            showToast(`${name} supprimé`);
+        async function removeGame(index) {
+            const name = games[index];
+            games = games.filter((_, i) => i !== index);
+            const ok = await saveGames();
+            if (ok) {
+                renderGames();
+                renderWeek();
+                showToast(`${name} supprimé`);
+            } else {
+                // Rollback si la sauvegarde a échoué
+                games.splice(index, 0, name);
+                renderGames();
+            }
         }
 
         async function saveGames() {
             planning.games = games;
-            await fetch('/api/planning', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(planning)
-            });
+            try {
+                const res = await fetch('/api/planning', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(planning)
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return true;
+            } catch (e) {
+                console.error('Erreur saveGames:', e);
+                showToast('Erreur sauvegarde', true);
+                // Resync depuis le serveur
+                await load();
+                return false;
+            }
         }
 
         async function sendToDiscord() {
